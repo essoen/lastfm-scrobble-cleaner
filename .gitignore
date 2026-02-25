@@ -1,0 +1,27 @@
+node_modules
+dist
+.env
+.claude/
+
+# Terraform
+.terraform
+*.tfstate
+*.tfstate.backup
+
+# CDK output
+cdk.out/
+
+# Lambda test output
+out.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log

@@ -1,0 +1,22 @@
+{
+  "name": "lastfm-scrobble-cleaner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "bundle": "esbuild src/handler.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/handler.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" && cd dist && zip -j lambda.zip handler.mjs",
+    "test-delete": "tsx src/test-delete.ts",
+    "deploy": "npm run bundle && cd infra && terraform apply"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.998.0",
+    "@aws-sdk/client-sns": "^3.998.0"
+  }
+}
