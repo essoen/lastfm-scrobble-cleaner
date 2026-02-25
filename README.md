@@ -15,8 +15,8 @@ EventBridge (daily cron)
 
 **Detection uses two complementary methods:**
 
-- **Session boundary detection** — compares the tail of one listening session with the head of the next; if they mirror, it's a startup replay
-- **Playback duration check** — if the same track appears twice closer together than its actual duration, it's physically impossible and therefore a duplicate
+- **Session replay detection** — if the first track of a new listening session matches the last track of the previous session, it's likely a resume/sync replay (common with Qobuz's cross-device sync and autoplay)
+- **Playback duration check** — if the same track appears twice closer together than its actual duration, it wasn't really listened to (e.g., skipping through songs)
 
 **Deletion** uses Last.fm's web form endpoint (`POST /user/{username}/library/delete` with CSRF token), since the `library.removeScrobble` API method is dead. No headless browser needed — just HTTP requests with session cookies.
 

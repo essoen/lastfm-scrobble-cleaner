@@ -36,10 +36,12 @@ infra/
 
 ## Duplicate Detection
 
+**Note:** This was built for Qobuz, which scrobbles at the *start* of a track (not at 50% like most scrobblers). This affects the detection logic.
+
 Two methods used together:
 
-1. **Session boundary detection** - Compares tail of one session with head of next; if they mirror, it's a startup replay
-2. **Duration overlap check** - Same track appearing closer together than its actual duration is physically impossible
+1. **Session replay** - First track of a new session matches the last track of the previous session. Catches Qobuz's sync behavior where resuming playback on another device re-scrobbles the interrupted track.
+2. **Duration overlap** - Same track scrobbled twice closer together than its actual duration. Catches skipped songs that weren't really listened to.
 
 ## Commands
 

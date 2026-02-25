@@ -38,34 +38,24 @@ function groupIntoSessions(
 }
 
 /**
- * Compare the tail of one session with the head of the next.
- * If they mirror (same tracks in same order), it's a startup replay.
- * Returns the scrobbles from the later session that are duplicates.
+ * Check if the first track of the new session matches the last track of the previous session.
+ * This catches resume/sync replays (e.g., Qobuz autoplay resuming an interrupted track).
  */
 function detectSessionReplay(
   before: Session,
   after: Session,
 ): Scrobble[] {
-  const tail = before.scrobbles;
-  const head = after.scrobbles;
-  const matchLen = Math.min(tail.length, head.length);
-  const duplicates: Scrobble[] = [];
+  const lastTrack = before.scrobbles[before.scrobbles.length - 1];
+  const firstTrack = after.scrobbles[0];
 
-  for (let i = 0; i < matchLen; i++) {
-    const a = tail[tail.length - matchLen + i];
-    const b = head[i];
-
-    if (
-      a.artist["#text"] === b.artist["#text"] &&
-      a.name === b.name
-    ) {
-      duplicates.push(b); // the replay copy
-    } else {
-      break; // sequence broken, stop matching
-    }
+  if (
+    lastTrack.artist["#text"] === firstTrack.artist["#text"] &&
+    lastTrack.name === firstTrack.name
+  ) {
+    return [firstTrack];
   }
 
-  return duplicates;
+  return [];
 }
 
 /**
