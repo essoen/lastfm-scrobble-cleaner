@@ -2,7 +2,7 @@ import type { Scrobble, LastfmClient } from "./lastfm-client.js";
 
 export interface FlaggedDuplicate {
   scrobble: Scrobble;
-  reason: "session-replay" | "duration-overlap" | "both";
+  reason: "session-replay" | "duration-overlap" | "incomplete-replay" | "both";
 }
 
 interface Session {
@@ -102,6 +102,82 @@ async function detectDurationOverlaps(
   return duplicates;
 }
 
+/**
+ * Detect runs of consecutive identical tracks where playback was not completed.
+ * For runs of 2+: keep completed plays, or just the first if none completed.
+ */
+async function detectIncompleteReplays(
+  scrobbles: Scrobble[],
+  getDuration: (artist: string, track: string) => Promise<number | null>,
+): Promise<Scrobble[]> {
+  if (scrobbles.length < 2) return [];
+
+  const chrono = [...scrobbles].reverse();
+  const duplicates: Scrobble[] = [];
+
+  let runStart = 0;
+
+  while (runStart < chrono.length) {
+    // Find end of current run of identical tracks
+    let runEnd = runStart;
+    while (
+      runEnd + 1 < chrono.length &&
+      chrono[runEnd + 1].artist["#text"] === chrono[runStart].artist["#text"] &&
+      chrono[runEnd + 1].name === chrono[runStart].name
+    ) {
+      runEnd++;
+    }
+
+    // Only process runs of 2+ consecutive identical tracks
+    if (runEnd > runStart) {
+      const durationMs = await getDuration(
+        chrono[runStart].artist["#text"],
+        chrono[runStart].name,
+      );
+
+      if (durationMs != null && durationMs > 0) {
+        const durationSec = durationMs / 1000;
+        const run = chrono.slice(runStart, runEnd + 1);
+
+        // Determine which scrobbles completed playback
+        // Completed = gap to next scrobble (any track) >= 90% of track duration
+        const completed: boolean[] = run.map((scrobble, idx) => {
+          const globalIdx = runStart + idx;
+
+          // Last scrobble in entire list: can't determine, treat as completed
+          if (globalIdx === chrono.length - 1) return true;
+
+          const thisTs = parseInt(scrobble.date.uts, 10);
+          const nextTs = parseInt(chrono[globalIdx + 1].date.uts, 10);
+          const gap = nextTs - thisTs;
+
+          return gap >= durationSec * 0.9;
+        });
+
+        const anyCompleted = completed.some((c) => c);
+
+        if (anyCompleted) {
+          // Keep completed ones, flag non-completed ones
+          for (let i = 0; i < run.length; i++) {
+            if (!completed[i]) {
+              duplicates.push(run[i]);
+            }
+          }
+        } else {
+          // None completed: keep the first, flag the rest
+          for (let i = 1; i < run.length; i++) {
+            duplicates.push(run[i]);
+          }
+        }
+      }
+    }
+
+    runStart = runEnd + 1;
+  }
+
+  return duplicates;
+}
+
 export interface DetectionResult {
   flagged: FlaggedDuplicate[];
   sessionCount: number;
@@ -136,6 +212,12 @@ export async function detectDuplicates(
   );
   const durationSet = new Set(durationDups.map((d) => d.date.uts));
 
+  // Incomplete replay detection
+  const incompleteReplayDups = await detectIncompleteReplays(
+    scrobbles,
+    getDuration,
+  );
+
   // Merge results
   const seen = new Set<string>();
   const flagged: FlaggedDuplicate[] = [];
@@ -150,7 +232,15 @@ export async function detectDuplicates(
 
   for (const s of durationDups) {
     if (!seen.has(s.date.uts)) {
+      seen.add(s.date.uts);
       flagged.push({ scrobble: s, reason: "duration-overlap" });
+    }
+  }
+
+  for (const s of incompleteReplayDups) {
+    if (!seen.has(s.date.uts)) {
+      seen.add(s.date.uts);
+      flagged.push({ scrobble: s, reason: "incomplete-replay" });
     }
   }
 
