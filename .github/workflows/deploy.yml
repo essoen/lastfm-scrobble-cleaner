@@ -1,0 +1,36 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run bundle
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::374727612187:role/lastfm-cleaner-github-deploy
+          aws-region: eu-north-1
+
+      - name: Deploy Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name lastfm-scrobble-cleaner \
+            --zip-file fileb://dist/lambda.zip \
+            --region eu-north-1

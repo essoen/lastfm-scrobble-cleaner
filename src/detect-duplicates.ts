@@ -40,22 +40,49 @@ function groupIntoSessions(
 /**
  * Check if the first track of the new session matches the last track of the previous session.
  * This catches resume/sync replays (e.g., Qobuz autoplay resuming an interrupted track).
+ *
+ * To reduce false positives, we check whether the replayed track was actually listened to
+ * by comparing the gap to the next scrobble against the track's duration.
+ * If the track was played for at least 50% of its duration, we assume it was intentional.
  */
-function detectSessionReplay(
+async function detectSessionReplay(
   before: Session,
   after: Session,
-): Scrobble[] {
+  getDuration: (artist: string, track: string) => Promise<number | null>,
+): Promise<Scrobble[]> {
   const lastTrack = before.scrobbles[before.scrobbles.length - 1];
   const firstTrack = after.scrobbles[0];
 
   if (
-    lastTrack.artist["#text"] === firstTrack.artist["#text"] &&
-    lastTrack.name === firstTrack.name
+    lastTrack.artist["#text"] !== firstTrack.artist["#text"] ||
+    lastTrack.name !== firstTrack.name
   ) {
+    return [];
+  }
+
+  // Single-track session — no way to tell if it was played, flag it
+  if (after.scrobbles.length === 1) {
     return [firstTrack];
   }
 
-  return [];
+  // Check if the track was played to at least 50% completion
+  const nextTrack = after.scrobbles[1];
+  const gap = parseInt(nextTrack.date.uts, 10) - parseInt(firstTrack.date.uts, 10);
+
+  const durationMs = await getDuration(firstTrack.artist["#text"], firstTrack.name);
+  if (durationMs == null || durationMs === 0) {
+    // No duration data available — can't confirm it was played, flag it
+    return [firstTrack];
+  }
+
+  const durationSec = durationMs / 1000;
+
+  if (gap >= durationSec * 0.5) {
+    // Track was played for at least 50% of its duration — likely intentional
+    return [];
+  }
+
+  return [firstTrack];
 }
 
 /**
@@ -121,7 +148,7 @@ export async function detectDuplicates(
   const replayScrobbles: Scrobble[] = [];
 
   for (let i = 0; i < sessions.length - 1; i++) {
-    const dups = detectSessionReplay(sessions[i], sessions[i + 1]);
+    const dups = await detectSessionReplay(sessions[i], sessions[i + 1], getDuration);
     for (const d of dups) {
       replayDups.add(d.date.uts);
       replayScrobbles.push(d);
