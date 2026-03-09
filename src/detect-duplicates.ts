@@ -3,10 +3,20 @@ import type { Scrobble, LastfmClient } from "./lastfm-client.js";
 export interface FlaggedDuplicate {
   scrobble: Scrobble;
   reason: "session-replay" | "duration-overlap" | "both";
+  detail?: {
+    gapSeconds: number;
+    durationSeconds: number;
+  };
 }
 
 interface Session {
   scrobbles: Scrobble[];
+}
+
+interface DurationOverlapResult {
+  scrobble: Scrobble;
+  gapSeconds: number;
+  durationSeconds: number;
 }
 
 /**

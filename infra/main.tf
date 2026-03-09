@@ -100,7 +100,7 @@ resource "aws_lambda_function" "cleaner" {
       SECRET_ARN     = aws_secretsmanager_secret.lastfm_credentials.arn
       DURATION_TABLE = aws_dynamodb_table.duration_cache.name
       SNS_TOPIC_ARN  = aws_sns_topic.alerts.arn
-      DRY_RUN        = "true"
+      DRY_RUN        = "false"
     }
   }
 }
