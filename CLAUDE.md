@@ -15,9 +15,9 @@ Last.fm Scrobble Cleaner - An AWS Lambda that runs daily to detect and remove du
 ### AWS Resources
 
 - Lambda function with 256MB memory, 5 min timeout
-- DynamoDB table for caching track durations
+- DynamoDB table (`lastfm-track-durations`) for track durations and per-run summary records (with TTL for summary items)
 - Secrets Manager for Last.fm credentials
-- SNS topic for daily summary emails and error alerts
+- SNS topic for weekly summary emails and error alerts
 - CloudWatch alarm for Lambda failures
 
 ## Key Files
@@ -30,6 +30,7 @@ src/
   lastfm-web.ts       # Web session login + form-based scrobble deletion
   detect-duplicates.ts # Duplicate detection logic
   duration-cache.ts   # Track duration caching
+  summary-store.ts    # DynamoDB persistence for per-run summaries (weekly aggregation)
 infra/
   main.tf             # Terraform infrastructure
 ```
@@ -64,7 +65,12 @@ Key config:
 
 Last.fm's `library.removeScrobble` API is dead. Deletion uses the web form endpoint (`POST /user/{username}/library/delete`) with CSRF token and session cookies - no headless browser needed.
 
+## Email Summaries
+
+Each daily run persists its `RunSummary` to DynamoDB under `pk = "summary#YYYY-MM-DD"` with a 14-day TTL. **On Sundays (UTC)** the run reads the last 7 days of summaries and sends one aggregated email via SNS. Other days are silent. Lambda errors continue to fire the CloudWatch alarm independently.
+
+The DynamoDB table is shared: duration-cache items have no `ttl` attribute and are unaffected by the TTL policy. Only summary items expire.
+
 ## Notes
 
-- The Lambda sends a daily email summary via SNS with scrobbles scanned, duplicates found, and actions taken
 - All resources are tagged with `Project=lastfm-scrobble-cleaner`, `Environment=prod`, `ManagedBy=terraform`
