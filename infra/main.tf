@@ -38,6 +38,14 @@ resource "aws_dynamodb_table" "duration_cache" {
     name = "pk"
     type = "S"
   }
+
+  # Also stores per-run summary items (pk = "summary#YYYY-MM-DD") with a TTL
+  # so the weekly aggregation can read the last 7 days. Duration-cache items
+  # don't carry a ttl attribute and are unaffected.
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
 }
 
 # --- Lambda ---
