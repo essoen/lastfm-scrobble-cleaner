@@ -18,7 +18,7 @@ export interface Config {
   fetchWindowHours: number;
   /** Max scrobbles to delete per run — circuit breaker (default: 20) */
   maxDeletionsPerRun: number;
-  /** Delay between deletion API calls in ms (default: 200) */
+  /** Base delay between deletion API calls in ms; actual delay is randomized up to 3x (default: 2000) */
   deletionDelayMs: number;
   /** If true, log what would be deleted but don't actually delete */
   dryRun: boolean;
@@ -75,7 +75,7 @@ export async function loadConfig(
     sessionGapSeconds: parseInt(env.SESSION_GAP_SECONDS ?? "1800", 10),
     fetchWindowHours: parseInt(env.FETCH_WINDOW_HOURS ?? "26", 10),
     maxDeletionsPerRun: parseInt(env.MAX_DELETIONS_PER_RUN ?? "20", 10),
-    deletionDelayMs: parseInt(env.DELETION_DELAY_MS ?? "200", 10),
+    deletionDelayMs: parseInt(env.DELETION_DELAY_MS ?? "2000", 10),
     dryRun: env.DRY_RUN !== "false", // default true
   };
 }

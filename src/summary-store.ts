@@ -17,6 +17,13 @@ export interface RunSummary {
     reason: string;
     timestamp: string;
   }[];
+  failedItems: {
+    artist: string;
+    track: string;
+    timestamp: string;
+    reason: string;
+    detail: string;
+  }[];
   circuitBreakerTriggered: boolean;
 }
 

@@ -1,6 +1,6 @@
 import { loadConfig } from "./config.js";
 import { createClient, type Scrobble } from "./lastfm-client.js";
-import { createWebClient } from "./lastfm-web.js";
+import { createWebClient, DeleteFailedError } from "./lastfm-web.js";
 import { detectDuplicates } from "./detect-duplicates.js";
 import { createDurationCache } from "./duration-cache.js";
 import {
@@ -99,6 +99,19 @@ function buildWeeklyEmail(
     }
   }
 
+  const allFailures = records.flatMap((r) =>
+    (r.summary.failedItems ?? []).map((item) => ({ date: r.date, ...item })),
+  );
+
+  if (allFailures.length > 0) {
+    lines.push("", "Failed deletions this week");
+    for (const item of allFailures) {
+      lines.push(`  [${item.reason}] ${item.artist} - ${item.track}`);
+      lines.push(`    Time: ${item.timestamp}`);
+      lines.push(`    Detail: ${item.detail}`);
+    }
+  }
+
   const subject = `Last.fm Cleaner: Weekly summary (${startStr} to ${endStr})`;
   return { subject, message: lines.join("\n") };
 }
@@ -178,6 +191,7 @@ export async function handler(): Promise<void> {
     failed: 0,
     dryRun: config.dryRun,
     deletedItems: [],
+    failedItems: [],
     circuitBreakerTriggered: false,
   };
 
@@ -242,26 +256,41 @@ export async function handler(): Promise<void> {
   console.log("Logging in to Last.fm web...");
   await webClient.login(config.username, config.password);
 
+  // Base spacing between deletions, plus escalating backoff when rate-limited.
+  const baseDelayMs = config.deletionDelayMs;
+  const RATE_LIMIT_BASE_BACKOFF_MS = 20_000;
+  const MAX_CONSECUTIVE_RATE_LIMITS = 3;
+  let consecutiveRateLimits = 0;
+
   for (const f of toDelete) {
+    const artist = f.scrobble.artist["#text"];
+    const track = f.scrobble.name;
     try {
-      const ok = await webClient.deleteScrobble({
-        artist: f.scrobble.artist["#text"],
-        track: f.scrobble.name,
+      await webClient.deleteScrobble({
+        artist,
+        track,
         timestamp: parseInt(f.scrobble.date.uts, 10),
       });
-      if (ok) {
-        summary.deleted++;
-        console.log(`  Deleted: ${f.scrobble.artist["#text"]} — ${f.scrobble.name}`);
-      } else {
-        summary.failed++;
-        console.error(`  Delete returned false: ${f.scrobble.artist["#text"]} — ${f.scrobble.name}`);
-      }
+      summary.deleted++;
+      consecutiveRateLimits = 0;
+      console.log(`  Deleted: ${artist} — ${track}`);
     } catch (err: any) {
       summary.failed++;
-      console.error(
-        `  Failed: ${f.scrobble.artist["#text"]} — ${f.scrobble.name}: ${err.message}`,
-      );
-      if (err.message?.includes("403")) {
+      const isStructured = err instanceof DeleteFailedError;
+      const reason = isStructured ? err.reason : "exception";
+      const detail = isStructured
+        ? `status=${err.status} set-cookie=${err.setCookiePresent} body="${err.bodySnippet}"`
+        : (err?.message ?? String(err));
+      summary.failedItems.push({
+        artist,
+        track,
+        timestamp: f.scrobble.date["#text"],
+        reason,
+        detail,
+      });
+      console.error(`  Failed [${reason}]: ${artist} — ${track}: ${detail}`);
+
+      if (isStructured && err.reason === "http_403") {
         console.log("  Re-authenticating...");
         try {
           await webClient.login(config.username, config.password);
@@ -269,9 +298,24 @@ export async function handler(): Promise<void> {
           console.error("  Re-authentication failed. Stopping.");
           break;
         }
+      } else if (isStructured && err.reason === "http_rate_limited") {
+        consecutiveRateLimits++;
+        if (consecutiveRateLimits >= MAX_CONSECUTIVE_RATE_LIMITS) {
+          console.error(
+            `  Rate-limited ${consecutiveRateLimits} times in a row. Stopping; remaining scrobbles will be retried next run.`,
+          );
+          break;
+        }
+        // Respect Retry-After if provided, otherwise back off exponentially.
+        const backoffMs =
+          err.retryAfterMs ??
+          RATE_LIMIT_BASE_BACKOFF_MS * 2 ** (consecutiveRateLimits - 1);
+        console.log(`  Rate-limited. Backing off ${Math.round(backoffMs / 1000)}s...`);
+        await sleep(backoffMs);
+        continue;
       }
     }
-    await randomDelay(1000, 10000);
+    await randomDelay(baseDelayMs, baseDelayMs * 3);
   }
 
   console.log(`Done. Deleted: ${summary.deleted}, Failed: ${summary.failed}`);
