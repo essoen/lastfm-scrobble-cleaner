@@ -258,64 +258,89 @@ export async function handler(): Promise<void> {
 
   // Base spacing between deletions, plus escalating backoff when rate-limited.
   const baseDelayMs = config.deletionDelayMs;
-  const RATE_LIMIT_BASE_BACKOFF_MS = 20_000;
-  const MAX_CONSECUTIVE_RATE_LIMITS = 3;
-  let consecutiveRateLimits = 0;
+  const RATE_LIMIT_BASE_BACKOFF_MS = 15_000;
+  const RATE_LIMIT_MAX_BACKOFF_MS = 90_000;
+  const MAX_RATE_LIMIT_RETRIES = 3;
+  // When the run hits a wall of rate limits (AWS egress IP is being blocked),
+  // there's no point grinding through the rest — stop and let a future run
+  // (which re-detects the same duplicates within the fetch window) retry.
+  let stop = false;
 
   for (const f of toDelete) {
+    if (stop) break;
     const artist = f.scrobble.artist["#text"];
     const track = f.scrobble.name;
-    try {
-      await webClient.deleteScrobble({
-        artist,
-        track,
-        timestamp: parseInt(f.scrobble.date.uts, 10),
-      });
-      summary.deleted++;
-      consecutiveRateLimits = 0;
-      console.log(`  Deleted: ${artist} — ${track}`);
-    } catch (err: any) {
-      summary.failed++;
-      const isStructured = err instanceof DeleteFailedError;
-      const reason = isStructured ? err.reason : "exception";
-      const detail = isStructured
-        ? `status=${err.status} set-cookie=${err.setCookiePresent} body="${err.bodySnippet}"`
-        : (err?.message ?? String(err));
-      summary.failedItems.push({
-        artist,
-        track,
-        timestamp: f.scrobble.date["#text"],
-        reason,
-        detail,
-      });
-      console.error(`  Failed [${reason}]: ${artist} — ${track}: ${detail}`);
 
-      if (isStructured && err.reason === "http_403") {
-        console.log("  Re-authenticating...");
-        try {
-          await webClient.login(config.username, config.password);
-        } catch {
-          console.error("  Re-authentication failed. Stopping.");
-          break;
-        }
-      } else if (isStructured && err.reason === "http_rate_limited") {
-        consecutiveRateLimits++;
-        if (consecutiveRateLimits >= MAX_CONSECUTIVE_RATE_LIMITS) {
-          console.error(
-            `  Rate-limited ${consecutiveRateLimits} times in a row. Stopping; remaining scrobbles will be retried next run.`,
+    for (let attempt = 0; ; ) {
+      try {
+        await webClient.deleteScrobble({
+          artist,
+          track,
+          timestamp: parseInt(f.scrobble.date.uts, 10),
+        });
+        summary.deleted++;
+        console.log(`  Deleted: ${artist} — ${track}`);
+        break;
+      } catch (err: any) {
+        const isStructured = err instanceof DeleteFailedError;
+
+        // Rate-limited: actually wait, then retry the SAME scrobble.
+        if (
+          isStructured &&
+          err.reason === "http_rate_limited" &&
+          attempt < MAX_RATE_LIMIT_RETRIES
+        ) {
+          attempt++;
+          // Last.fm sends a useless `Retry-After: 0`, so only honour positive
+          // values; otherwise back off exponentially (capped to stay within the
+          // Lambda timeout).
+          const retry =
+            err.retryAfterMs && err.retryAfterMs > 0 ? err.retryAfterMs : null;
+          const backoffMs = Math.min(
+            retry ?? RATE_LIMIT_BASE_BACKOFF_MS * 2 ** (attempt - 1),
+            RATE_LIMIT_MAX_BACKOFF_MS,
           );
-          break;
+          console.log(
+            `  Rate-limited (attempt ${attempt}/${MAX_RATE_LIMIT_RETRIES}). Backing off ${Math.round(backoffMs / 1000)}s...`,
+          );
+          await sleep(backoffMs);
+          continue;
         }
-        // Respect Retry-After if provided, otherwise back off exponentially.
-        const backoffMs =
-          err.retryAfterMs ??
-          RATE_LIMIT_BASE_BACKOFF_MS * 2 ** (consecutiveRateLimits - 1);
-        console.log(`  Rate-limited. Backing off ${Math.round(backoffMs / 1000)}s...`);
-        await sleep(backoffMs);
-        continue;
+
+        // Give up on this scrobble.
+        summary.failed++;
+        const reason = isStructured ? err.reason : "exception";
+        const detail = isStructured
+          ? `status=${err.status} set-cookie=${err.setCookiePresent} body="${err.bodySnippet}"`
+          : (err?.message ?? String(err));
+        summary.failedItems.push({
+          artist,
+          track,
+          timestamp: f.scrobble.date["#text"],
+          reason,
+          detail,
+        });
+        console.error(`  Failed [${reason}]: ${artist} — ${track}: ${detail}`);
+
+        if (isStructured && err.reason === "http_403") {
+          console.log("  Re-authenticating...");
+          try {
+            await webClient.login(config.username, config.password);
+          } catch {
+            console.error("  Re-authentication failed. Stopping.");
+            stop = true;
+          }
+        } else if (isStructured && err.reason === "http_rate_limited") {
+          console.error(
+            "  Still rate-limited after retries. Stopping; remaining scrobbles will be retried on a future run.",
+          );
+          stop = true;
+        }
+        break;
       }
     }
-    await randomDelay(baseDelayMs, baseDelayMs * 3);
+
+    if (!stop) await randomDelay(baseDelayMs, baseDelayMs * 3);
   }
 
   console.log(`Done. Deleted: ${summary.deleted}, Failed: ${summary.failed}`);

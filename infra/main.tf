@@ -109,6 +109,9 @@ resource "aws_lambda_function" "cleaner" {
       DURATION_TABLE = aws_dynamodb_table.duration_cache.name
       SNS_TOPIC_ARN  = aws_sns_topic.alerts.arn
       DRY_RUN        = "false"
+      # 7-day window so deletions that fail (intermittent 406 from the shared
+      # AWS egress IP) are re-detected and retried on subsequent daily runs.
+      FETCH_WINDOW_HOURS = "168"
     }
   }
 }
