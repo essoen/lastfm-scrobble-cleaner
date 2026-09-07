@@ -30,6 +30,11 @@ interface Cookies {
 
 export interface LastfmWebClient {
   login(username: string, password: string): Promise<void>;
+  /**
+   * Fetch the user's library page as a browser would.
+   * Returns false when the WAF is serving its rate-limit page to this IP.
+   */
+  probe(): Promise<boolean>;
   deleteScrobble(params: {
     artist: string;
     track: string;
@@ -96,6 +101,23 @@ export function createWebClient(username: string): LastfmWebClient {
     return cookies.raw;
   }
 
+  /** Adopt any rotated session/CSRF cookie. Returns whether any was sent. */
+  function absorbCookies(headers: Headers): boolean {
+    const respCookies = parseCookies(headers);
+    const newSessionid = respCookies.get("sessionid");
+    const newCsrf = respCookies.get("csrftoken");
+    if (cookies && (newSessionid || newCsrf)) {
+      const sessionid = newSessionid ?? cookies.sessionid;
+      const csrftoken = newCsrf ?? cookies.csrftoken;
+      cookies = {
+        sessionid,
+        csrftoken,
+        raw: `sessionid=${sessionid}; csrftoken=${csrftoken}`,
+      };
+    }
+    return respCookies.size > 0;
+  }
+
   return {
     async login(loginUsername: string, password: string): Promise<void> {
       // Step 1: GET the login page to obtain initial CSRF token
@@ -156,6 +178,27 @@ export function createWebClient(username: string): LastfmWebClient {
       console.log("Web login successful");
     },
 
+    async probe(): Promise<boolean> {
+      const res = await fetch(`${BASE_URL}/user/${username}`, {
+        headers: {
+          ...BROWSER_HEADERS,
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          Cookie: cookieHeader(),
+          Referer: BASE_URL,
+        },
+        redirect: "manual",
+      });
+      await res.text(); // drain the body so the socket is released
+      absorbCookies(res.headers);
+
+      if (res.status === 406 || res.status === 429) {
+        console.warn(`Probe: WAF rate-limit page (HTTP ${res.status})`);
+        return false;
+      }
+      return true;
+    },
+
     async deleteScrobble({ artist, track, timestamp }): Promise<boolean> {
       if (!cookies) throw new Error("Not logged in");
 
@@ -185,19 +228,7 @@ export function createWebClient(username: string): LastfmWebClient {
         },
       );
 
-      const respCookies = parseCookies(res.headers);
-      const setCookiePresent = respCookies.size > 0;
-      const newSessionid = respCookies.get("sessionid");
-      const newCsrf = respCookies.get("csrftoken");
-      if (newSessionid || newCsrf) {
-        const sessionid = newSessionid ?? cookies.sessionid;
-        const csrftoken = newCsrf ?? cookies.csrftoken;
-        cookies = {
-          sessionid,
-          csrftoken,
-          raw: `sessionid=${sessionid}; csrftoken=${csrftoken}`,
-        };
-      }
+      const setCookiePresent = absorbCookies(res.headers);
 
       const text = await res.text();
       const bodySnippet = text.slice(0, 200);

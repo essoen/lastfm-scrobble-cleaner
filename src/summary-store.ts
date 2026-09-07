@@ -4,26 +4,48 @@ import {
   PutItemCommand,
 } from "@aws-sdk/client-dynamodb";
 
+/**
+ * Identity of a scrobble inside a summary.
+ *
+ * `uts` is the real key: `timestamp` is Last.fm's display string and only has
+ * minute precision, so a replay glitch can produce several scrobbles of the
+ * same track inside one minute. Optional because summaries written before
+ * 2026-09 (still inside the 14-day TTL window) don't carry it.
+ */
+interface ScrobbleRef {
+  artist: string;
+  track: string;
+  timestamp: string;
+  uts?: string;
+}
+
+export interface DeletedItem extends ScrobbleRef {
+  reason: string;
+}
+
+export interface FailedItem extends ScrobbleRef {
+  reason: string;
+  detail: string;
+}
+
+/** Rate-limited or never attempted — expected to retry on a later run. */
+export interface DeferredItem extends ScrobbleRef {
+  reason: string;
+}
+
 export interface RunSummary {
   scrobblesScanned: number;
   sessionsFound: number;
   duplicatesFound: number;
+  /** Deletions that actually succeeded. */
   deleted: number;
+  /** Genuine failures — not rate-limiting, which is deferred instead. */
   failed: number;
+  deferred?: number;
   dryRun: boolean;
-  deletedItems: {
-    artist: string;
-    track: string;
-    reason: string;
-    timestamp: string;
-  }[];
-  failedItems: {
-    artist: string;
-    track: string;
-    timestamp: string;
-    reason: string;
-    detail: string;
-  }[];
+  deletedItems: DeletedItem[];
+  failedItems: FailedItem[];
+  deferredItems?: DeferredItem[];
   circuitBreakerTriggered: boolean;
 }
 

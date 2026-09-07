@@ -4,13 +4,13 @@ This file provides context for Claude Code when working on this repository.
 
 ## Project Overview
 
-Last.fm Scrobble Cleaner - An AWS Lambda that runs daily to detect and remove duplicate scrobbles caused by apps replaying the last listening session on startup.
+Last.fm Scrobble Cleaner - An AWS Lambda that runs every 6 hours to detect and remove duplicate scrobbles caused by apps replaying the last listening session on startup.
 
 ## Architecture
 
 - **Runtime**: Node.js 22, TypeScript, ESM modules
 - **Infrastructure**: Terraform (in `infra/`)
-- **Deployment**: AWS Lambda (ARM64) triggered by EventBridge daily at 02:00 UTC
+- **Deployment**: AWS Lambda (ARM64) triggered by EventBridge at 02:00, 08:00, 14:00 and 20:00 UTC
 
 ### AWS Resources
 
@@ -31,6 +31,7 @@ src/
   detect-duplicates.ts # Duplicate detection logic
   duration-cache.ts   # Track duration caching
   summary-store.ts    # DynamoDB persistence for per-run summaries (weekly aggregation)
+  weekly-email.ts     # Renders the Sunday summary email from a week of records
 infra/
   main.tf             # Terraform infrastructure
 ```
@@ -67,7 +68,9 @@ Last.fm's `library.removeScrobble` API is dead. Deletion uses the web form endpo
 
 ## Email Summaries
 
-Each daily run persists its `RunSummary` to DynamoDB under `pk = "summary#YYYY-MM-DD"` with a 14-day TTL. **On Sundays (UTC)** the run reads the last 7 days of summaries and sends one aggregated email via SNS. Other days are silent. Lambda errors continue to fire the CloudWatch alarm independently.
+Each run persists its `RunSummary` to DynamoDB under `pk = "summary#YYYY-MM-DD"` with a 14-day TTL (later runs on a date overwrite the record). **On Sundays (UTC)** the run reads the last 7 days of summaries and sends one aggregated email via SNS. Other days are silent. Lambda errors continue to fire the CloudWatch alarm independently.
+
+A scrobble lands in exactly one bucket per run: `deletedItems` (deletion succeeded), `deferredItems` (rate-limited or not attempted — a later run retries it), or `failedItems` (genuine failure). Because the 168h fetch window re-detects an undeleted duplicate on every run, `buildWeeklyEmail` merges records by the scrobble's `uts` — never by the display timestamp, which only has minute precision and would collapse distinct same-minute scrobbles. Anything deferred that a later run deleted is reported as self-healed rather than as an open item.
 
 The DynamoDB table is shared: duration-cache items have no `ttl` attribute and are unaffected by the TTL policy. Only summary items expire.
 

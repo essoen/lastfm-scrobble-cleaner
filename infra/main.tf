@@ -116,15 +116,19 @@ resource "aws_lambda_function" "cleaner" {
   }
 }
 
-# --- EventBridge (daily at 02:00 UTC) ---
+# --- EventBridge (every 6 hours) ---
 
-resource "aws_cloudwatch_event_rule" "daily" {
-  name                = "lastfm-cleaner-daily"
-  schedule_expression = "cron(0 2 * * ? *)"
+# Four runs a day rather than one: Last.fm's WAF intermittently blocks the
+# shared AWS egress IP on the delete endpoint, and a fresh invocation is what
+# gets a new IP. Each run is stateless re-detection over FETCH_WINDOW_HOURS, so
+# a run with nothing to delete does nothing and never even logs in.
+resource "aws_cloudwatch_event_rule" "schedule" {
+  name                = "lastfm-cleaner-schedule"
+  schedule_expression = "cron(0 2,8,14,20 * * ? *)"
 }
 
 resource "aws_cloudwatch_event_target" "lambda" {
-  rule = aws_cloudwatch_event_rule.daily.name
+  rule = aws_cloudwatch_event_rule.schedule.name
   arn  = aws_lambda_function.cleaner.arn
 }
 
@@ -132,7 +136,7 @@ resource "aws_lambda_permission" "eventbridge" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.cleaner.function_name
   principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.daily.arn
+  source_arn    = aws_cloudwatch_event_rule.schedule.arn
 }
 
 # --- SNS + CloudWatch Alarm ---
