@@ -1,7 +1,4 @@
-import {
-  SecretsManagerClient,
-  GetSecretValueCommand,
-} from "@aws-sdk/client-secrets-manager";
+import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 
 export interface Config {
   /** Last.fm username to clean */
@@ -31,27 +28,28 @@ interface SecretCredentials {
   password: string;
 }
 
-async function fetchSecret(secretArn: string): Promise<SecretCredentials> {
-  const client = new SecretsManagerClient({});
+async function fetchParameter(paramName: string): Promise<SecretCredentials> {
+  const client = new SSMClient({});
   const response = await client.send(
-    new GetSecretValueCommand({ SecretId: secretArn })
+    new GetParameterCommand({ Name: paramName, WithDecryption: true })
   );
-  if (!response.SecretString) {
-    throw new Error("Secret has no string value");
+  const value = response.Parameter?.Value;
+  if (!value) {
+    throw new Error(`Parameter ${paramName} has no value`);
   }
-  return JSON.parse(response.SecretString) as SecretCredentials;
+  return JSON.parse(value) as SecretCredentials;
 }
 
 export async function loadConfig(
   env: Record<string, string | undefined>
 ): Promise<Config> {
-  const secretArn = env.SECRET_ARN;
+  const paramName = env.PARAM_NAME;
 
   let credentials: SecretCredentials;
 
-  if (secretArn) {
-    // Load credentials from Secrets Manager
-    credentials = await fetchSecret(secretArn);
+  if (paramName) {
+    // Load credentials from SSM Parameter Store
+    credentials = await fetchParameter(paramName);
   } else {
     // Fall back to environment variables (for local dev)
     const required = (key: string): string => {

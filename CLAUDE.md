@@ -16,7 +16,7 @@ Last.fm Scrobble Cleaner - An AWS Lambda that runs every 6 hours to detect and r
 
 - Lambda function with 256MB memory, 5 min timeout
 - DynamoDB table (`lastfm-track-durations`) for track durations and per-run summary records (with TTL for summary items)
-- Secrets Manager for Last.fm credentials
+- SSM Parameter Store (SecureString) for Last.fm credentials
 - SNS topic for weekly summary emails and error alerts
 - CloudWatch alarm for Lambda failures
 
@@ -25,7 +25,7 @@ Last.fm Scrobble Cleaner - An AWS Lambda that runs every 6 hours to detect and r
 ```
 src/
   handler.ts          # Lambda entry point
-  config.ts           # Env var loading, Secrets Manager integration
+  config.ts           # Env var loading, SSM Parameter Store integration
   lastfm-client.ts    # Last.fm API client (read-only operations)
   lastfm-web.ts       # Web session login + form-based scrobble deletion
   detect-duplicates.ts # Duplicate detection logic
@@ -55,7 +55,7 @@ npm run test-delete   # Local interactive test script
 
 ## Environment Variables
 
-Lambda reads credentials from Secrets Manager (`SECRET_ARN` env var). For local dev, use `.env` file with:
+Lambda reads credentials from SSM Parameter Store (`PARAM_NAME` env var, a SecureString holding JSON). For local dev, use `.env` file with:
 - `LASTFM_API_KEY`, `LASTFM_API_SECRET`, `LASTFM_USERNAME`, `LASTFM_PASSWORD`
 
 Key config:

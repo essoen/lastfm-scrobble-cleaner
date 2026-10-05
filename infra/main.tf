@@ -20,11 +20,26 @@ provider "aws" {
   }
 }
 
-# --- Secrets Manager ---
+# --- SSM Parameter Store ---
 
-resource "aws_secretsmanager_secret" "lastfm_credentials" {
-  name        = "lastfm-scrobble-cleaner/credentials"
+# Terraform owns the parameter, not its value: the real credentials are written
+# out-of-band with `aws ssm put-parameter` so they never land in the (local,
+# unencrypted) terraform.tfstate. Same arrangement the Secrets Manager secret
+# had before it — SecureString on the standard tier costs nothing, where
+# Secrets Manager charged $0.40/month in flat per-secret rent.
+resource "aws_ssm_parameter" "lastfm_credentials" {
+  name        = "/lastfm-scrobble-cleaner/credentials"
   description = "Last.fm API credentials for scrobble cleaner"
+  type        = "SecureString"
+  value       = "PLACEHOLDER - real value set out-of-band via aws ssm put-parameter"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+data "aws_kms_alias" "ssm" {
+  name = "alias/aws/ssm"
 }
 
 # --- DynamoDB ---
@@ -72,8 +87,14 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
 
 data "aws_iam_policy_document" "lambda_permissions" {
   statement {
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.lastfm_credentials.arn]
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.lastfm_credentials.arn]
+  }
+  # The AWS-managed aws/ssm key defers to the caller's IAM policy, so decrypting
+  # the SecureString needs an explicit grant here.
+  statement {
+    actions   = ["kms:Decrypt"]
+    resources = [data.aws_kms_alias.ssm.target_key_arn]
   }
   statement {
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
@@ -105,7 +126,7 @@ resource "aws_lambda_function" "cleaner" {
 
   environment {
     variables = {
-      SECRET_ARN     = aws_secretsmanager_secret.lastfm_credentials.arn
+      PARAM_NAME     = aws_ssm_parameter.lastfm_credentials.name
       DURATION_TABLE = aws_dynamodb_table.duration_cache.name
       SNS_TOPIC_ARN  = aws_sns_topic.alerts.arn
       DRY_RUN        = "false"
@@ -214,8 +235,8 @@ output "function_name" {
   value = aws_lambda_function.cleaner.function_name
 }
 
-output "secret_arn" {
-  value = aws_secretsmanager_secret.lastfm_credentials.arn
+output "param_name" {
+  value = aws_ssm_parameter.lastfm_credentials.name
 }
 
 output "alert_topic_arn" {

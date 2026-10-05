@@ -38,7 +38,7 @@ npm run bundle                          # build Lambda zip
 cd infra && terraform init && terraform apply
 ```
 
-After first deploy, populate the Secrets Manager secret with your Last.fm credentials. The Lambda runs daily at 02:00 UTC in **dry-run mode by default** — it logs what it would delete without actually deleting. Set `DRY_RUN=false` in the Lambda environment after validating the logs.
+After first deploy, populate the SSM parameter with your Last.fm credentials. The Lambda runs daily at 02:00 UTC in **dry-run mode by default** — it logs what it would delete without actually deleting. Set `DRY_RUN=false` in the Lambda environment after validating the logs.
 
 ### Configuration
 
@@ -79,7 +79,7 @@ src/
   handler.ts             # Lambda entry point
   test-delete.ts         # Interactive test script for deletion
 infra/
-  main.tf                # Terraform — Lambda, EventBridge, DynamoDB, Secrets Manager, SNS
+  main.tf                # Terraform — Lambda, EventBridge, DynamoDB, SSM Parameter Store, SNS
 ```
 
 ### Infrastructure
@@ -88,5 +88,5 @@ Managed with Terraform (`infra/main.tf`):
 
 - **Lambda** (Node.js 22, ARM64) — triggered daily by EventBridge
 - **DynamoDB** — caches track durations to reduce API calls
-- **Secrets Manager** — stores Last.fm credentials
+- **SSM Parameter Store** — stores Last.fm credentials (SecureString, standard tier)
 - **CloudWatch + SNS** — error alarms
